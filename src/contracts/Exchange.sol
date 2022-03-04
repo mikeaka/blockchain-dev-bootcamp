@@ -37,6 +37,7 @@ contract Exchange {
 	mapping(uint256 => _Order) public orders;
 
 	mapping(uint256 => bool) public orderCancelled;
+	mapping(uint256 => bool) public orderFilled;
 
 	// Events
 	event Deposit(address token, address user, uint256 amount, uint256 balance);
@@ -59,6 +60,16 @@ contract Exchange {
 		uint256 amountGive, // the amount the user want to give
 		uint256 timestamp
 	);	
+	event Trade(		
+		uint256 id,
+		address user, // person who create the order
+		address tokenGet, // token the user want to purchase
+		uint256 amountGet, // amount the user want to purchase
+		address tokenGive, // token the will use during the trade
+		uint256 amountGive, // the amount the user want to give
+		address userFill, // User that fill the order
+		uint256 timestamp
+	);
 
 	// ---- order
 	// a way to model the order
@@ -156,6 +167,48 @@ contract Exchange {
 
 		orderCancelled[_id] = true;
 		emit Cancel(orderCount, msg.sender, _order.tokenGet, _order.amountGet, _order.tokenGive, _order.amountGive, now);
+	}
+
+	function fillOrder(uint256 _id) public {
+		require(_id > 0 && _id <= orderCount);
+		// require that the id is NOT in orderfilled or orderCancelled
+		require(!orderFilled[_id]);
+		require(!orderCancelled[_id]);
+
+		// fetch the Order (type _Order)
+		_Order storage _order = orders[_id];
+
+		_trade(_order.id, _order.user, _order.tokenGet, _order.amountGet, _order.tokenGive, _order.amountGive);
+
+		// Mark order as filled
+		orderFilled[_order.id] = true;
+	}
+
+	function _trade(uint256 _orderId, address _user, address _tokenGet, uint256 _amountGet, address _tokenGive, uint256 _amountGive) internal {
+		// ------ trade will swap balances
+
+		// Fee paid by the user that fills the order, a.k.a msg.sender
+		// fee will be deducted from _amountGet
+		uint256 _feeAmount = _amountGet.mul(feePercent).div(100);
+
+		// Execute trade
+		// -------- send tokenGet from 1 to 2
+		// msg.sender is the user that fill the order
+		// _user is the one that create the order
+		tokens[_tokenGet][msg.sender] = tokens[_tokenGet][msg.sender].sub(_amountGet.add(_feeAmount));
+		// _user is the address that will receive the amountGet
+		tokens[_tokenGet][_user] = tokens[_tokenGet][_user].add(_amountGet);
+
+		// Pay fees
+		tokens[_tokenGet][feeAccount] = tokens[_tokenGet][feeAccount].add(_feeAmount);
+
+		// receive token from 2 to 1
+		tokens[_tokenGive][_user] = tokens[_tokenGive][_user].sub(_amountGive);
+		tokens[_tokenGive][msg.sender] = tokens[_tokenGive][msg.sender].add(_amountGive);
+
+		// charge fees
+		// Emit trade event
+		emit Trade(_orderId, _user, _tokenGet, _amountGet, _tokenGive, _amountGive, msg.sender, now);
 	}
 
 }
